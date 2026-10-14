@@ -25,6 +25,10 @@ var (
 	workflows            []Workflow
 	dockerComposeCommand = ""
 	workflowDepth        = 0
+	logFile              = ""
+	runSection           = ""
+	runStart             time.Time
+	currentLine          = ""
 )
 
 func main() {
@@ -51,7 +55,11 @@ func main() {
 			Name:  wf.Name,
 			Usage: wf.Comment,
 			Action: func(c *cli.Context) error {
+				runSection = wf.Name
+				runStart = time.Now()
+				logFile = wf.LogFile
 				executeWorkflow(wf, values)
+				writeLog("SUCCESS")
 				return nil
 			},
 		})
@@ -94,6 +102,9 @@ func executeWorkflow(wf Workflow, values map[string]string) {
 			WithBackgroundStyle(pterm.NewStyle(pterm.BgCyan)).
 			WithMargin(1).
 			Printfln("🚀 WORKFLOW: %s", strings.ToUpper(wf.Name))
+		if logFile != "" {
+			printLine(pterm.Info.Sprintf("This run is logged to %s", logFile))
+		}
 	} else {
 		pterm.FgYellow.Printfln("%s╭── 📦 Sub-Workflow: %s", indent, wf.Name)
 	}
@@ -148,6 +159,7 @@ func executeLine(lineOriginal string, values map[string]string) {
 		return
 	}
 
+	currentLine = lineOriginal
 	lineOriginal = ResolveVariables(values, lineOriginal)
 	actionOriginal := strings.Split(lineOriginal, " ")[0]
 	action := strings.ToLower(actionOriginal)
@@ -183,6 +195,7 @@ func executeLine(lineOriginal string, values map[string]string) {
 				fatal("Invalid exit code: %s", args[1])
 			}
 		}
+		writeLog(fmt.Sprintf("EXIT %d", code))
 		os.Exit(code)
 
 	case "touch":
@@ -390,7 +403,9 @@ func executeLine(lineOriginal string, values map[string]string) {
 		answer = strings.ToLower(strings.TrimSpace(answer))
 		if answer != "y" && answer != "yes" {
 			fmt.Println()
-			fatal("Cancelled")
+			printLine(pterm.Error.Sprint("Cancelled"))
+			writeLog("CANCELLED")
+			os.Exit(1)
 		}
 
 	case "load_env":
@@ -467,6 +482,7 @@ func run(line string, printCommand bool) {
 	if err != nil {
 		fmt.Println()
 		pterm.Error.Printfln("Command failed '%s': %v", line, err)
+		writeLog("FAILED")
 		os.Exit(1)
 	}
 }
@@ -495,13 +511,27 @@ func ParseContentToWorkFlowStruct(filename string) []Workflow {
 				continue
 			}
 			wfName := line[1:end]
-			comment := ""
-			after := strings.TrimSpace(line[end+1:])
-			if strings.HasPrefix(after, "#") {
-				comment = strings.TrimSpace(strings.TrimPrefix(after, "#"))
+			options, comment, _ := strings.Cut(line[end+1:], "#")
+			comment = strings.TrimSpace(comment)
+
+			// Section options sit between "]" and the comment, as key=value.
+			// The only option is log=<file>; anything else stops WF.
+			logFile := ""
+			for _, option := range strings.Fields(options) {
+				key, value, _ := strings.Cut(option, "=")
+				if key != "log" {
+					fatal("Unknown section option '%s' in [%s]", option, wfName)
+				}
+				if value == "" {
+					fatal("Invalid section header [%s]: log needs a file (log=<file>)", wfName)
+				}
+				if logFile != "" {
+					fatal("Invalid section header [%s]: log is set twice", wfName)
+				}
+				logFile = value
 			}
 
-			fileWorkflows = append(fileWorkflows, Workflow{Name: wfName, Comment: comment})
+			fileWorkflows = append(fileWorkflows, Workflow{Name: wfName, Comment: comment, LogFile: logFile})
 			continue
 		}
 
@@ -563,6 +593,7 @@ func GetDockerComposeCommand() string {
 type Workflow struct {
 	Name    string
 	Comment string
+	LogFile string
 	Lines   []string
 }
 
@@ -642,6 +673,40 @@ func splitArgs(line string) []string {
 	return args
 }
 
+// writeLog appends one line about the current run to the file set by the
+// "log" command, and does nothing when the workflow has no "log" line.
+// A failed run also logs the .wf line that failed, as written in the file:
+// variables are not replaced, so no secret ends up in the log.
+func writeLog(status string) {
+	if logFile == "" {
+		return
+	}
+	user := os.Getenv("USER")
+	if user == "" {
+		user = os.Getenv("USERNAME")
+	}
+	host, _ := os.Hostname()
+	entry := fmt.Sprintf("%s | %-15s | %-9s | %-7s | %s@%s",
+		runStart.Format("2006-01-02 15:04:05"),
+		runSection,
+		status,
+		time.Since(runStart).Round(100*time.Millisecond).String(),
+		user,
+		host,
+	)
+	if status == "FAILED" {
+		entry += " | " + currentLine
+	}
+
+	fd, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		pterm.Warning.Printfln("Failed to write log %s: %v", logFile, err)
+		return
+	}
+	fd.WriteString(entry + "\n")
+	fd.Close()
+}
+
 // unquote removes one pair of surrounding double or single quotes.
 func unquote(s string) string {
 	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
@@ -652,5 +717,6 @@ func unquote(s string) string {
 
 func fatal(format string, a ...interface{}) {
 	printLine(pterm.Error.Sprintf(format, a...))
+	writeLog("FAILED")
 	os.Exit(1)
 }

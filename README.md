@@ -189,6 +189,32 @@ Variables are shared by all workflows of a run: a variable set in a sub-workflow
 
 ---
 
+## 🗒️ Run History
+
+Add `log=<file>` to a section header to keep a trace of every run:
+
+```ini
+[deploy] log=deploy.log # Deploy the application
+run composer install --no-dev
+docker_compose up -d
+```
+
+The option sits between `]` and the comment. It is the only section option: anything else (`log` without a file, an unknown option, text without `#`) stops WF before anything runs.
+
+Each run appends one line, whether it succeeds or not:
+
+```text
+2026-10-14 09:12:03 | deploy          | SUCCESS   | 12.4s   | fady@prod-01
+2026-10-15 10:05:31 | deploy          | FAILED    | 3.1s    | fady@prod-01 | run composer install --no-dev
+2026-10-16 18:30:12 | deploy          | CANCELLED | 2s      | marc@prod-01
+```
+
+The result is `SUCCESS`, `FAILED`, `CANCELLED` (a `confirm` answered no) or `EXIT <code>`. A failed run also logs the line that failed, as written in the `.wf` file: variables are not replaced, so secrets never end up in the log.
+
+The log of the section you launch covers the whole run, sub-workflows included. A `log=` on a section called with `wf <section>` only applies when that section is launched directly.
+
+---
+
 ## 📖 Things to know
 
 * **Section names must be unique** across all the `.wf` files of the folder, and inside each file. Otherwise WF refuses to start (`duplicated subcommand name`).

@@ -38,8 +38,9 @@
     <li><a href="#messages">8. Messages</a></li>
     <li><a href="#checks">9. Checks and pauses</a></li>
     <li><a href="#sub">10. Sub-workflows and exit</a></li>
-    <li><a href="#errors">11. Errors and exit codes</a></li>
-    <li><a href="#git-ci">12. Git and CI</a></li>
+    <li><a href="#log">11. Run history</a></li>
+    <li><a href="#errors">12. Errors and exit codes</a></li>
+    <li><a href="#git-ci">13. Git and CI</a></li>
   </ol>
 </nav>
 
@@ -89,7 +90,7 @@ $ wf build              <span class="c"># runs build on its own</span></pre>
 <p>WF reads every file ending in <code>.wf</code> in the current folder (not in sub-folders). Each line is trimmed, then:</p>
 <ol>
   <li>An empty line, or a line starting with <code>#</code>, is ignored.</li>
-  <li>A line starting with <code>[</code> opens a section. The name is what is between <code>[</code> and <code>]</code>. Text after <code>]</code> that starts with <code>#</code> becomes the section description, shown by <code>wf</code>.</li>
+  <li>A line starting with <code>[</code> opens a section. The name is what is between <code>[</code> and <code>]</code>. Text after <code>#</code> on that line becomes the section description, shown by <code>wf</code>. Between <code>]</code> and <code>#</code>, only the <code>log=&lt;file&gt;</code> option is allowed (see <a href="#log">Run history</a>).</li>
   <li>Any other line is a command of the current section. Its first word is the command keyword, case-insensitive: <code>set</code>, <code>SET</code> and <code>Set</code> are the same.</li>
 </ol>
 <p>Lines written before the first section form a section called <code>main</code>, run with <code>wf main</code>. A section with no command is dropped. <code>wf</code> lists the sections in the order they are written, file by file in alphabetical order.</p>
@@ -216,7 +217,48 @@ $ wf --version          <span class="c"># prints the WF version</span></pre>
 <p>Any section of any <code>.wf</code> file in the folder can be called. A name that does not exist stops WF with <code>Workflow '&lt;name&gt;' not found</code>. A section that calls itself, directly or through another one, never ends.</p>
 <p><code>exit</code> stops WF immediately, including every parent workflow, with exit code <code>0</code>. <code>exit &lt;code&gt;</code> uses that code instead: <code>exit 1</code> stops on purpose and marks the run as failed. A code that is not a number stops WF with <code>Invalid exit code</code>.</p>
 
-<h2 id="errors">11. Errors and exit codes</h2>
+<h2 id="log">11. Run history</h2>
+<pre><span class="k">[deploy]</span> <span class="v">log=deploy.log</span> <span class="c"># Deploy the application</span>
+<span class="k">run</span> <span class="v">composer install --no-dev</span>
+<span class="k">docker_compose</span> <span class="v">up -d</span></pre>
+<p>The <code>log=&lt;file&gt;</code> option in a section header keeps a trace of every run of that section. When the run ends, WF appends one line to the file, created if needed:</p>
+<pre>2026-10-14 09:12:03 | deploy          | SUCCESS   | 12.4s   | fady@prod-01
+2026-10-15 10:05:31 | deploy          | FAILED    | 3.1s    | fady@prod-01 | run composer install --no-dev
+2026-10-16 18:30:12 | deploy          | CANCELLED | 2s      | marc@prod-01
+2026-10-16 18:41:57 | build           | EXIT 3    | 900ms   | ci@runner-2</pre>
+<p>Columns are aligned for section names up to 15 characters; a longer name simply pushes the rest of its line.</p>
+<div class="table-box">
+<table>
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>Date</td><td>When the run started.</td></tr>
+    <tr><td>Section</td><td>The section given on the command line, even if <code>log</code> is in a sub-workflow.</td></tr>
+    <tr><td>Result</td><td><code>SUCCESS</code>, <code>FAILED</code>, <code>CANCELLED</code> (a <code>confirm</code> answered no) or <code>EXIT &lt;code&gt;</code>.</td></tr>
+    <tr><td>Duration</td><td>Of the whole run.</td></tr>
+    <tr><td>Who</td><td><code>user@machine</code>.</td></tr>
+    <tr><td>Failed line</td><td>Only for <code>FAILED</code>: the line that failed, as written in the <code>.wf</code> file.</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="note"><strong>No secret in the log.</strong> The failed line is logged before variables are replaced: <code>run deploy --password=${DB_PASSWORD}</code> stays as is. Variable values are never written.</div>
+<h3>Header rules</h3>
+<p>The option sits between <code>]</code> and the comment, written exactly <code>log=&lt;file&gt;</code>. WF checks every header when it loads the <code>.wf</code> files, before anything runs, and refuses to start on any mistake:</p>
+<div class="table-box">
+<table>
+  <thead><tr><th>Header</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td><code>[deploy] log=deploy.log # Deploy</code></td><td>Logged to <code>deploy.log</code></td></tr>
+    <tr><td><code>[deploy] log=deploy.log</code></td><td>Logged, no description</td></tr>
+    <tr><td><code>[deploy] log # Deploy</code></td><td><code>log needs a file (log=&lt;file&gt;)</code></td></tr>
+    <tr><td><code>[deploy] logs=deploy.log</code></td><td><code>Unknown section option 'logs=deploy.log'</code></td></tr>
+    <tr><td><code>[deploy] log=a.log log=b.log</code></td><td><code>log is set twice</code></td></tr>
+    <tr><td><code>[deploy] Deploy the app</code></td><td><code>Unknown section option 'Deploy'</code>: a description needs <code>#</code></td></tr>
+  </tbody>
+</table>
+</div>
+<p>The log belongs to the section you launch, and covers the whole run, sub-workflows included. A <code>log=</code> on a section called with <code>wf &lt;section&gt;</code> is not used; it only applies when that section is launched directly. Without <code>log=</code>, no file is written. A run stopped with <code>Ctrl+C</code> is not logged. Decide yourself whether the log file goes in Git or in <code>.gitignore</code>.</p>
+
+<h2 id="errors">12. Errors and exit codes</h2>
 <p>WF stops at the first error. Lines already run stay done: there is no rollback.</p>
 <div class="table-box">
 <table>
@@ -231,7 +273,7 @@ $ wf --version          <span class="c"># prints the WF version</span></pre>
 </div>
 <p>An unknown command keyword prints <code>Unknown command or invalid syntax : &lt;line&gt;</code>. Since lines are checked when they run, a typo at the end of a section only shows up after the lines above it have run.</p>
 
-<h2 id="git-ci">12. Git and CI</h2>
+<h2 id="git-ci">13. Git and CI</h2>
 <p>Commit your <code>.wf</code> files: they are your project's runbook. WF writes nothing besides what your commands create.</p>
 <p>In CI or on a server, download the binary and run a section:</p>
 <pre>$ curl -fsSL -o /usr/local/bin/wf https://github.com/michelware/wf/releases/latest/download/wf-linux-amd64
