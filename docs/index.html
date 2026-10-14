@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WF — your project's tasks, one line at a time</title>
+<meta name="description" content="WF is a single Go binary that runs the build, install and deploy steps written in plain-text .wf files. One command per line. No YAML. No shell tricks. A readable tree of everything that ran.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="logo" href="./">wf<span>/</span></a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="#how">How it works</a>
+      <a href="#example">Example</a>
+      <a href="#why">Why WF</a>
+      <a href="#compare">Compare</a>
+      <a href="docs.html">Documentation</a>
+      <a href="https://github.com/michelware/wf">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="hero">
+      <p class="eyebrow">Single Go binary · Linux · macOS · Windows</p>
+      <h1>Your project's tasks, one line at a time.</h1>
+      <p class="lead">One binary. Plain-text <code>.wf</code> files. No YAML. WF runs your build, install and deploy steps from top to bottom, and shows you exactly what ran.</p>
+      <div class="actions">
+        <a class="button primary" href="docs.html#install">Install WF</a>
+        <a class="button" href="docs.html">Read the docs</a>
+      </div>
+    </div>
+  </div>
+
+  <section id="how">
+    <div class="wrap">
+      <p class="label">How it works</p>
+      <h2>Write. Run. Read.</h2>
+      <p class="section-lead">Three steps, nothing hidden. Every line of a <code>.wf</code> file is one command, run in the order you wrote it.</p>
+      <div class="grid">
+        <div class="card">
+          <h3>1. Write</h3>
+          <p>Group your commands in named sections of a <code>.wf</code> file: <code>[deploy] # Deploy the app</code>, then one command per line.</p>
+        </div>
+        <div class="card">
+          <h3>2. Run</h3>
+          <p><code>wf deploy</code> reads every <code>.wf</code> file in the current folder and runs the <code>deploy</code> section. <code>wf build</code> inside it calls another section.</p>
+        </div>
+        <div class="card">
+          <h3>3. Read</h3>
+          <p>Each command is printed, its output framed, its duration shown. Sub-workflows are indented like a tree. The first failure stops everything.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="example">
+    <div class="wrap">
+      <p class="label">Example</p>
+      <h2>The same deploy, four ways.</h2>
+      <p class="section-lead">Check that the tools are installed, install the dependencies, clear the cache, write a secret, start the containers. Read the WF version once and you know what it does.</p>
+      <p class="terminal-title">deploy.wf · WF · 7 lines</p>
+<pre><span class="k">[deploy]</span> <span class="c"># Deploy the application</span>
+<span class="k">require</span> <span class="v">docker composer</span>
+<span class="k">run</span> <span class="v">composer install --no-dev</span>
+<span class="k">remove</span> <span class="v">var/cache</span>
+<span class="k">write</span> <span class="v">.env.local APP_SECRET=${GENERATE_SECRET}</span>
+<span class="k">docker_compose</span> <span class="v">up -d</span>
+<span class="k">notify_success</span> <span class="v">"Deployed!"</span></pre>
+      <div class="grid">
+        <div class="card">
+          <p class="terminal-title">Makefile · Make · 10 lines</p>
+<pre><span class="c"># Deploy the application</span>
+.PHONY: deploy
+deploy:
+	@command -v docker &gt;/dev/null || (echo "docker is required" &amp;&amp; exit 1)
+	@command -v composer &gt;/dev/null || (echo "composer is required" &amp;&amp; exit 1)
+	composer install --no-dev
+	rm -rf var/cache
+	echo "APP_SECRET=$$(openssl rand -hex 32)" &gt;&gt; .env.local
+	docker compose up -d
+	@echo "Deployed!"</pre>
+          <p>To know: tabs only, <code>$$</code> escaping, <code>.PHONY</code>, shell commands, <code>openssl</code> installed.</p>
+        </div>
+        <div class="card">
+          <p class="terminal-title">justfile · just · 9 lines</p>
+<pre><span class="c"># Deploy the application</span>
+deploy:
+    @command -v docker &gt;/dev/null || (echo "docker is required" &amp;&amp; exit 1)
+    @command -v composer &gt;/dev/null || (echo "composer is required" &amp;&amp; exit 1)
+    composer install --no-dev
+    rm -rf var/cache
+    echo "APP_SECRET=$(openssl rand -hex 32)" &gt;&gt; .env.local
+    docker compose up -d
+    @echo "Deployed!"</pre>
+          <p>To know: recipe syntax, shell commands, <code>openssl</code> installed.</p>
+        </div>
+        <div class="card">
+          <p class="terminal-title">Taskfile.yml · Task · 16 lines</p>
+<pre>version: '3'
+
+tasks:
+  deploy:
+    desc: Deploy the application
+    preconditions:
+      - sh: command -v docker
+        msg: docker is required
+      - sh: command -v composer
+        msg: composer is required
+    cmds:
+      - composer install --no-dev
+      - rm -rf var/cache
+      - echo "APP_SECRET=$(openssl rand -hex 32)" &gt;&gt; .env.local
+      - docker compose up -d
+      - echo "Deployed!"</pre>
+          <p>To know: YAML indentation, Task keys, shell commands, <code>openssl</code> installed.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="why">
+    <div class="wrap">
+      <p class="label">Why WF</p>
+      <h2>Made for the steps you repeat.</h2>
+      <p class="section-lead">Installing, building, deploying: a list of commands in a fixed order. You need them written down and run the same way every time, not a programming language.</p>
+      <div class="grid">
+        <div class="card">
+          <h3>Nothing to learn</h3>
+          <p>A section is <code>[name]</code>, a command is one line, a comment starts with <code>#</code>. Anyone on your team can read a <code>.wf</code> file.</p>
+        </div>
+        <div class="card">
+          <h3>No shell in between</h3>
+          <p><code>run composer install</code> runs <code>composer</code> with <code>install</code>. Quotes work like in a terminal; pipes and globs stay plain text. No surprises.</p>
+        </div>
+        <div class="card">
+          <h3>Native file commands</h3>
+          <p><code>mkdir</code>, <code>write</code>, <code>copy</code>, <code>move</code>, <code>remove</code> and <code>set_permissions</code> are built into WF. They do not depend on the tools of the machine.</p>
+        </div>
+        <div class="card">
+          <h3>Output you can read</h3>
+          <p>A tree of workflows and commands, a timer on each one, and a clear message on the line that failed.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="compare">
+    <div class="wrap">
+      <p class="label">Compare</p>
+      <h2>Like Make or just, without the syntax.</h2>
+      <p class="section-lead">Those tools can do anything, so they need a language. WF only runs commands in order, so it needs none.</p>
+      <div class="table-box">
+        <table>
+          <thead>
+            <tr><th></th><th>Shell script</th><th>Make</th><th>just</th><th>Task</th><th class="us">WF</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Install</td><td>Bash or PowerShell</td><td><code>make</code></td><td>Single binary</td><td>Single binary</td><td class="us">Single Go binary</td></tr>
+            <tr><td>File</td><td><code>.sh</code> / <code>.ps1</code></td><td><code>Makefile</code></td><td><code>justfile</code></td><td><code>Taskfile.yml</code></td><td class="us"><code>.wf</code> files</td></tr>
+            <tr><td>Syntax</td><td>A programming language</td><td>Targets, tabs, make functions</td><td>Recipes, parameters, expressions</td><td>YAML, Go templates</td><td class="us">One command per line</td></tr>
+            <tr><td>Conditions &amp; loops</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td><td class="us">No, by design</td></tr>
+            <tr><td>Output</td><td>Raw</td><td>Raw</td><td>Raw</td><td>Raw or prefixed</td><td class="us">Tree with a timer per command</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="never">
+    <div class="wrap">
+      <p class="label">Scope</p>
+      <h2>What WF will never do</h2>
+      <p class="section-lead">A single Go file you can read in one sitting stays a tool you can trust. WF will not grow into another scripting language.</p>
+      <ul class="never">
+        <li>add conditions</li>
+        <li>add loops</li>
+        <li>add functions</li>
+        <li>run steps in parallel</li>
+        <li>hide a shell behind your commands</li>
+        <li>load plugins</li>
+        <li>require a YAML file</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="get">
+    <div class="wrap">
+      <p class="label">Get WF</p>
+      <h2>One download. Five platforms.</h2>
+      <p class="section-lead">Linux x64 and ARM64, macOS Intel and Apple Silicon, Windows x64. Download the binary, put it in your PATH, and you are ready.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/michelware/wf/releases/latest">Download the latest release</a>
+        <a class="button" href="docs.html#quick-start">Quick start guide</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">WF · <a href="https://github.com/michelware/wf">Source on GitHub</a> · <a href="docs.html">Documentation</a></div>
+</footer>
+
+</body>
+</html>

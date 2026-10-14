@@ -21,6 +21,7 @@ import (
 )
 
 var (
+	version              = "2.0.0"
 	workflows            []Workflow
 	dockerComposeCommand = ""
 	workflowDepth        = 0
@@ -63,7 +64,12 @@ func main() {
 		).Render()
 	}
 
-	app := &cli.App{Commands: Commands}
+	app := &cli.App{
+		Name:     "wf",
+		Usage:    "run the workflows of the .wf files in the current folder",
+		Version:  version,
+		Commands: Commands,
+	}
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)
 	}
@@ -149,13 +155,13 @@ func executeLine(lineOriginal string, values map[string]string) {
 
 	switch action {
 	case "set":
-		line = strings.TrimPrefix(line, "set ")
-		parts := strings.Split(line, "=")
-		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		name, value, _ := strings.Cut(strings.TrimPrefix(line, "set "), "=")
+		name, value = strings.TrimSpace(name), strings.TrimSpace(value)
+		if name == "" || value == "" {
 			fatal("Invalid set command")
 		}
-		values[parts[0]] = parts[1]
-		printLine(pterm.Info.Sprintf("Variable %s set to %s", parts[0], values[parts[0]]))
+		values[name] = value
+		printLine(pterm.Info.Sprintf("Variable %s set to %s", name, value))
 
 	case "run":
 		run(strings.TrimPrefix(line, "run "), true)
@@ -165,10 +171,19 @@ func executeLine(lineOriginal string, values map[string]string) {
 		if strings.HasPrefix(msg, "\"") && strings.HasSuffix(msg, "\"") {
 			msg = msg[1 : len(msg)-1]
 		}
-		printLine(pterm.DefaultBasicText.Sprint("  "+msg))
+		printLine(pterm.DefaultBasicText.Sprint("  " + msg))
 
 	case "exit":
-		os.Exit(0)
+		args := strings.Fields(line)
+		code := 0
+		if len(args) > 1 {
+			var err error
+			code, err = strconv.Atoi(args[1])
+			if err != nil {
+				fatal("Invalid exit code: %s", args[1])
+			}
+		}
+		os.Exit(code)
 
 	case "touch":
 		fileToCreate := strings.TrimSpace(strings.TrimPrefix(line, "touch "))
@@ -183,12 +198,11 @@ func executeLine(lineOriginal string, values map[string]string) {
 		printLine(pterm.Success.Sprintf("%s created", fileToCreate))
 
 	case "copy", "cp":
-		line = strings.TrimPrefix(line, "copy ")
 		parts := strings.Fields(line)
-		if len(parts) < 2 {
+		if len(parts) < 3 {
 			fatal("Invalid copy command")
 		}
-		fileOrFolder, destination := parts[0], parts[1]
+		fileOrFolder, destination := parts[1], parts[2]
 		if !FileExists(fileOrFolder) {
 			fatal("%s not found", fileOrFolder)
 		}
@@ -262,9 +276,10 @@ func executeLine(lineOriginal string, values map[string]string) {
 		for _, wf := range workflows {
 			if wf.Name == wfName {
 				executeWorkflow(wf, values)
-				break
+				return
 			}
 		}
+		fatal("Workflow '%s' not found", wfName)
 
 	case "notify_success", "notify_error", "notify_warning", "notify_info":
 		notifies := map[string]*pterm.PrefixPrinter{
@@ -287,6 +302,121 @@ func executeLine(lineOriginal string, values map[string]string) {
 		}
 		printLine(pterm.DefaultBasicText.Sprint("  " + msg))
 
+	case "write":
+		rest := strings.TrimSpace(strings.TrimPrefix(line, "write"))
+		file, text, _ := strings.Cut(rest, " ")
+		if file == "" {
+			fatal("Invalid write command: %s", line)
+		}
+		fd, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fatal("Failed to open %s: %v", file, err)
+		}
+		_, err = fd.WriteString(unquote(strings.TrimSpace(text)) + "\n")
+		fd.Close()
+		if err != nil {
+			fatal("Failed to write to %s: %v", file, err)
+		}
+		printLine(pterm.Success.Sprintf("Line written to %s", file))
+
+	case "remove":
+		args := strings.Fields(line)
+		if len(args) < 2 {
+			fatal("Invalid remove command: %s", line)
+		}
+		target := args[1]
+		absTarget, _ := filepath.Abs(target)
+		if absTarget == getCurrentDir() || filepath.Dir(absTarget) == absTarget {
+			fatal("Refusing to remove '%s'", target)
+		}
+		if !FileExists(target) {
+			printLine(pterm.Info.Sprintf("%s does not exist, skipping...", target))
+			return
+		}
+		if err := os.RemoveAll(target); err != nil {
+			fatal("Failed to remove %s: %v", target, err)
+		}
+		printLine(pterm.Success.Sprintf("%s removed", target))
+
+	case "move":
+		args := strings.Fields(line)
+		if len(args) < 3 {
+			fatal("Invalid move command: %s", line)
+		}
+		source, destination := args[1], args[2]
+		if !FileExists(source) {
+			fatal("%s not found", source)
+		}
+		if FileExists(destination) {
+			printLine(pterm.Info.Sprintf("%s already exists, skipping...", destination))
+			return
+		}
+		if err := os.Rename(source, destination); err != nil {
+			fatal("Failed to move %s to %s: %v", source, destination, err)
+		}
+		printLine(pterm.Success.Sprintf("%s moved to %s", source, destination))
+
+	case "require":
+		args := strings.Fields(line)
+		if len(args) < 2 {
+			fatal("Invalid require command: %s", line)
+		}
+		for _, program := range args[1:] {
+			if _, err := exec.LookPath(program); err != nil {
+				fatal("%s is required but was not found in PATH", program)
+			}
+			printLine(pterm.Success.Sprintf("%s found", program))
+		}
+
+	case "sleep":
+		args := strings.Fields(line)
+		if len(args) < 2 {
+			fatal("Invalid sleep command: %s", line)
+		}
+		seconds, err := strconv.Atoi(args[1])
+		if err != nil || seconds < 0 {
+			fatal("Invalid sleep duration: %s", args[1])
+		}
+		printLine(pterm.Info.Sprintf("Waiting %ds...", seconds))
+		time.Sleep(time.Duration(seconds) * time.Second)
+
+	case "confirm":
+		question := unquote(strings.TrimSpace(strings.TrimPrefix(line, "confirm")))
+		if workflowDepth > 1 {
+			fmt.Print(strings.Repeat("  ", workflowDepth-1))
+		}
+		fmt.Print(pterm.Warning.Sprint(question) + " [y/N] ")
+		answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		answer = strings.ToLower(strings.TrimSpace(answer))
+		if answer != "y" && answer != "yes" {
+			fmt.Println()
+			fatal("Cancelled")
+		}
+
+	case "load_env":
+		args := strings.Fields(line)
+		if len(args) < 2 {
+			fatal("Invalid load_env command: %s", line)
+		}
+		content, err := os.ReadFile(args[1])
+		if err != nil {
+			fatal("Failed to read %s: %v", args[1], err)
+		}
+		count := 0
+		for _, envLine := range strings.Split(string(content), "\n") {
+			envLine = strings.TrimSpace(envLine)
+			if envLine == "" || strings.HasPrefix(envLine, "#") {
+				continue
+			}
+			name, value, found := strings.Cut(envLine, "=")
+			if !found {
+				continue
+			}
+			values[strings.TrimSpace(name)] = unquote(strings.TrimSpace(value))
+			count++
+		}
+		printLine(pterm.Info.Sprintf("%d variables loaded from %s", count, args[1]))
+
 	default:
 		fatal("Unknown command or invalid syntax : " + line)
 	}
@@ -297,6 +427,7 @@ func run(line string, printCommand bool) {
 	if line == "" {
 		return
 	}
+	args := splitArgs(line)
 
 	var start time.Time
 	indent := ""
@@ -310,7 +441,6 @@ func run(line string, printCommand bool) {
 		start = time.Now()
 	}
 
-	args := strings.Fields(line)
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Env = os.Environ()
 
@@ -341,17 +471,17 @@ func run(line string, printCommand bool) {
 	}
 }
 
-func ParseContentToWorkFlowStruct(filename string) map[string]Workflow {
+// ParseContentToWorkFlowStruct returns the sections of a .wf file in the
+// order they are written. Lines before the first section go to "main".
+func ParseContentToWorkFlowStruct(filename string) []Workflow {
 	file, err := os.Open(filename)
 	if err != nil {
 		panic(err)
 	}
 	defer file.Close()
 
-	workflowsMap := map[string]Workflow{}
+	fileWorkflows := []Workflow{{Name: "main"}}
 	scanner := bufio.NewScanner(file)
-	currentWorkflow := Workflow{Name: "main"}
-	workflowsMap[currentWorkflow.Name] = currentWorkflow
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -371,15 +501,14 @@ func ParseContentToWorkFlowStruct(filename string) map[string]Workflow {
 				comment = strings.TrimSpace(strings.TrimPrefix(after, "#"))
 			}
 
-			currentWorkflow = Workflow{Name: wfName, Comment: comment}
-			workflowsMap[wfName] = currentWorkflow
+			fileWorkflows = append(fileWorkflows, Workflow{Name: wfName, Comment: comment})
 			continue
 		}
 
-		currentWorkflow.Lines = append(currentWorkflow.Lines, line)
-		workflowsMap[currentWorkflow.Name] = currentWorkflow
+		last := len(fileWorkflows) - 1
+		fileWorkflows[last].Lines = append(fileWorkflows[last].Lines, line)
 	}
-	return workflowsMap
+	return fileWorkflows
 }
 
 func InitDefaultVariables() map[string]string {
@@ -475,6 +604,50 @@ func printLine(text string) {
 		fmt.Print(strings.Repeat("  ", workflowDepth-1))
 	}
 	fmt.Println(text)
+}
+
+// splitArgs splits a command line on spaces, like a terminal does:
+// "..." and '...' group words anywhere in an argument, and are removed.
+// Backslashes, pipes and $VAR are plain text: there is no shell.
+func splitArgs(line string) []string {
+	args := []string{}
+	current := ""
+	inArg := false
+	var quote rune
+	for _, c := range line {
+		switch {
+		case quote != 0 && c == quote:
+			quote = 0
+		case quote != 0:
+			current += string(c)
+		case c == '"' || c == '\'':
+			quote = c
+			inArg = true
+		case c == ' ' || c == '\t':
+			if inArg {
+				args = append(args, current)
+				current, inArg = "", false
+			}
+		default:
+			current += string(c)
+			inArg = true
+		}
+	}
+	if quote != 0 {
+		fatal("Missing closing quote in: %s", line)
+	}
+	if inArg {
+		args = append(args, current)
+	}
+	return args
+}
+
+// unquote removes one pair of surrounding double or single quotes.
+func unquote(s string) string {
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 func fatal(format string, a ...interface{}) {

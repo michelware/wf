@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WF documentation</title>
+<meta name="description" content="Install and use WF: the 5 binaries, .wf file syntax, every command, variables and .env files, checks, sub-workflows, errors, exit codes and CI.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="logo" href="./">wf<span>/</span></a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="./">Home</a>
+      <a href="docs.html">Documentation</a>
+      <a href="https://github.com/michelware/wf">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+<div class="docs">
+
+<nav class="toc" aria-label="Documentation">
+  <ol>
+    <li><a href="#install">1. Install</a></li>
+    <li><a href="#quick-start">2. Quick start</a></li>
+    <li><a href="#syntax">3. Writing .wf files</a></li>
+    <li><a href="#cli">4. Running wf</a></li>
+    <li><a href="#variables">5. Variables</a></li>
+    <li><a href="#run">6. run and docker_compose</a></li>
+    <li><a href="#files">7. Files and folders</a></li>
+    <li><a href="#messages">8. Messages</a></li>
+    <li><a href="#checks">9. Checks and pauses</a></li>
+    <li><a href="#sub">10. Sub-workflows and exit</a></li>
+    <li><a href="#errors">11. Errors and exit codes</a></li>
+    <li><a href="#git-ci">12. Git and CI</a></li>
+  </ol>
+</nav>
+
+<article>
+<h1>Documentation</h1>
+<p>Everything WF does, in the order it does it. Run every command from the folder that holds your <code>.wf</code> files: WF only reads the current directory.</p>
+
+<h2 id="install">1. Install</h2>
+<p>WF ships as 5 standalone binaries. Download the one for your platform from the <a href="https://github.com/michelware/wf/releases/latest">latest release</a>:</p>
+<div class="table-box">
+<table>
+  <thead><tr><th>Platform</th><th>File</th></tr></thead>
+  <tbody>
+    <tr><td>Linux x64</td><td><code>wf-linux-amd64</code></td></tr>
+    <tr><td>Linux ARM64</td><td><code>wf-linux-arm64</code></td></tr>
+    <tr><td>macOS Intel</td><td><code>wf-macos-amd64</code></td></tr>
+    <tr><td>macOS Apple Silicon</td><td><code>wf-macos-arm64</code></td></tr>
+    <tr><td>Windows x64</td><td><code>wf-windows-amd64.exe</code></td></tr>
+  </tbody>
+</table>
+</div>
+<p>Linux and macOS: make it executable and put it in your PATH.</p>
+<pre>$ chmod +x wf-linux-amd64
+$ sudo mv wf-linux-amd64 /usr/local/bin/wf
+$ wf --version          <span class="c"># prints: wf version 2.0.0</span>
+$ wf                    <span class="c"># prints the WF logo and your workflows</span></pre>
+<p>Windows: rename the file to <code>wf.exe</code> and place it in a folder listed in your <code>PATH</code>.</p>
+
+<h2 id="quick-start">2. Quick start</h2>
+<p>Create a file ending in <code>.wf</code> at your project root, for example <code>deploy.wf</code>:</p>
+<pre><span class="k">[build]</span> <span class="c"># Build the application</span>
+<span class="k">echo</span> <span class="v">"Building the application..."</span>
+<span class="k">run</span> <span class="v">npm install</span>
+<span class="k">run</span> <span class="v">npm run build</span>
+
+<span class="k">[deploy]</span> <span class="c"># Build and start the containers</span>
+<span class="k">set</span> <span class="v">ENV=production</span>
+<span class="k">wf</span> <span class="v">build</span>
+<span class="k">docker_compose</span> <span class="v">up -d</span>
+<span class="k">notify_success</span> <span class="v">"Deployed in ${ENV}"</span></pre>
+<p>Then run:</p>
+<pre>$ wf                    <span class="c"># lists build and deploy, with their comments</span>
+$ wf deploy             <span class="c"># runs deploy, and build as a sub-workflow</span>
+$ wf build              <span class="c"># runs build on its own</span></pre>
+
+<h2 id="syntax">3. Writing .wf files</h2>
+<p>WF reads every file ending in <code>.wf</code> in the current folder (not in sub-folders). Each line is trimmed, then:</p>
+<ol>
+  <li>An empty line, or a line starting with <code>#</code>, is ignored.</li>
+  <li>A line starting with <code>[</code> opens a section. The name is what is between <code>[</code> and <code>]</code>. Text after <code>]</code> that starts with <code>#</code> becomes the section description, shown by <code>wf</code>.</li>
+  <li>Any other line is a command of the current section. Its first word is the command keyword, case-insensitive: <code>set</code>, <code>SET</code> and <code>Set</code> are the same.</li>
+</ol>
+<p>Lines written before the first section form a section called <code>main</code>, run with <code>wf main</code>. A section with no command is dropped. <code>wf</code> lists the sections in the order they are written, file by file in alphabetical order.</p>
+<div class="note"><strong>Section names must be unique, inside each file and across all the .wf files of the folder.</strong> If the same name appears twice (including two files that both have lines before their first section, so both have a <code>main</code>), WF refuses to start with <code>duplicated subcommand name</code>.</div>
+<div class="note"><strong>Comments must be on their own line.</strong> <code>run ls # list</code> is not a comment: <code>#</code> and <code>list</code> are passed to <code>ls</code>.</div>
+<p>WF does not check a file before running it. Each line is read when its turn comes; see <a href="#errors">Errors and exit codes</a>.</p>
+
+<h2 id="cli">4. Running wf</h2>
+<pre>$ wf                    <span class="c"># logo, then the list of sections and their descriptions</span>
+$ wf &lt;section&gt;          <span class="c"># runs that section</span>
+$ wf help &lt;section&gt;     <span class="c"># shows the description of one section</span>
+$ wf --version          <span class="c"># prints the WF version</span></pre>
+<p>Section names are case-sensitive here: <code>[Deploy]</code> runs with <code>wf Deploy</code>, not <code>wf deploy</code>. An unknown name prints <code>No help topic for '&lt;name&gt;'</code> and exits with code <code>3</code>. If the folder has no <code>.wf</code> file, WF also prints <code>No workflow files found</code>.</p>
+<p>The section runs under a full-width <code>WORKFLOW: &lt;NAME&gt;</code> header and ends with <code>Workflow '&lt;name&gt;' completed in &lt;duration&gt;</code>.</p>
+
+<h2 id="variables">5. Variables</h2>
+<p>Before running a line, WF replaces every <code>${NAME}</code> it knows:</p>
+<div class="table-box">
+<table>
+  <thead><tr><th>Variable</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td><code>${CURRENT_PATH}</code></td><td>The folder where <code>wf</code> was started.</td></tr>
+    <tr><td><code>${IP_LOCAL}</code></td><td>The first non-loopback IPv4 address of the machine. Empty if there is none.</td></tr>
+    <tr><td><code>${GENERATE_SECRET}</code></td><td>64 random hexadecimal characters (32 bytes). One new value per line: two uses on the same line get the same value.</td></tr>
+    <tr><td><code>${NAME}</code></td><td>Any variable defined with <code>set</code> or loaded with <code>load_env</code>.</td></tr>
+  </tbody>
+</table>
+</div>
+<pre><span class="k">set</span> <span class="v">APP=my-app</span>
+<span class="k">set</span> <span class="v">IMAGE=registry.local/${APP}</span>
+<span class="k">echo</span> <span class="v">"Building ${IMAGE} from ${CURRENT_PATH}"</span></pre>
+<p><code>set</code> prints <code>Variable NAME set to value</code>. The name is what comes before the first <code>=</code>, the value is everything after it, including other <code>=</code> signs. Spaces around the name and the value are removed: <code>set DSN = mysql://db?x=1</code> works. An empty name or value stops WF with <code>Invalid set command</code>.</p>
+<h3>load_env</h3>
+<pre><span class="k">load_env</span> <span class="v">.env</span>
+<span class="k">echo</span> <span class="v">"Connecting to ${DATABASE_URL}"</span></pre>
+<p>Reads the file and sets one WF variable per <code>NAME=value</code> line, like <code>set</code>. Empty lines, lines starting with <code>#</code> and lines without <code>=</code> are skipped. One pair of quotes around the value is removed (<code>"..."</code> or <code>'...'</code>). An empty value is allowed. <code>${...}</code> inside the file is not replaced. WF prints how many variables were loaded, never their values. A missing file stops WF.</p>
+<p>Variables are shared by every workflow of a run: a variable set in a sub-workflow is still there after it returns. An unknown <code>${NAME}</code> is left in the line as is. <code>set</code> can also override <code>CURRENT_PATH</code> or <code>IP_LOCAL</code>.</p>
+<p>WF variables live in WF only. They are <strong>not</strong> environment variables: a program started with <code>run</code> does not see them. It does see the environment WF itself was started with.</p>
+
+<h2 id="run">6. run and docker_compose</h2>
+<pre><span class="k">run</span> <span class="v">composer install --no-dev</span>
+<span class="k">run</span> <span class="v">php bin/console cache:clear</span>
+<span class="k">docker_compose</span> <span class="v">up -d --build</span></pre>
+<p><code>run</code> starts a program directly, <strong>without a shell</strong>. The line is split on spaces: the first word is the program, found in your <code>PATH</code>, the others are its arguments. Quotes work like in a terminal:</p>
+<div class="table-box">
+<table>
+  <thead><tr><th>You write</th><th>The program receives</th></tr></thead>
+  <tbody>
+    <tr><td><code>git commit -m "fix bug"</code></td><td><code>commit</code> · <code>-m</code> · <code>fix bug</code></td></tr>
+    <tr><td><code>--option="toto tata"</code></td><td><code>--option=toto tata</code></td></tr>
+    <tr><td><code>-e 'SELECT 1'</code></td><td><code>-e</code> · <code>SELECT 1</code></td></tr>
+    <tr><td><code>"it's"</code> / <code>'say "hi"'</code></td><td><code>it's</code> / <code>say "hi"</code></td></tr>
+    <tr><td><code>"${CURRENT_PATH}"</code></td><td>The path as one argument, even with spaces</td></tr>
+  </tbody>
+</table>
+</div>
+<p>A quote that is never closed stops WF with <code>Missing closing quote</code>. A lone apostrophe opens a quote too: write <code>"it's"</code>. Backslashes are plain text, so Windows paths like <code>C:\Users\me</code> work as written. Pipes (<code>|</code>), redirections (<code>&gt;</code>), <code>&amp;&amp;</code>, globs (<code>*</code>), <code>~</code> and <code>$VAR</code> are passed as plain text.</p>
+<p>Need shell features? Put them in a script and run the script:</p>
+<pre><span class="k">run</span> <span class="v">sh scripts/backup.sh</span>
+<span class="k">run</span> <span class="v">cmd /c dir</span>          <span class="c"># Windows built-in commands go through cmd</span></pre>
+<p>WF prints the command, frames its output, then shows its duration:</p>
+<pre>╭─ ▶ composer install --no-dev
+│  Installing dependencies from lock file
+│  ...
+╰─ ✔ 3.4s</pre>
+<p>If the program cannot be found or exits with a non-zero code, WF prints <code>✘ Failed in &lt;duration&gt;</code> and <code>Command failed</code>, then stops with exit code <code>1</code>.</p>
+<p><code>docker_compose &lt;args&gt;</code> works like <code>run</code>, with <code>docker compose &lt;args&gt;</code> when the Compose plugin answers, or <code>docker-compose &lt;args&gt;</code> otherwise. The check is done once per run.</p>
+
+<h2 id="files">7. Files and folders</h2>
+<p>These commands are written in Go and do not depend on the system tools. Paths are relative to the folder where <code>wf</code> was started, and cannot contain spaces, except for <code>touch</code>.</p>
+<pre><span class="k">remove</span> <span class="v">dist</span>
+<span class="k">mkdir</span> <span class="v">dist</span>
+<span class="k">write</span> <span class="v">.env.local APP_SECRET=${GENERATE_SECRET}</span>
+<span class="k">move</span> <span class="v">build/app dist/app</span></pre>
+<div class="table-box">
+<table>
+  <thead><tr><th>Command</th><th>Behavior</th></tr></thead>
+  <tbody>
+    <tr><td><code>mkdir &lt;dir&gt;</code></td><td>Creates the folder and its missing parents. Skipped if the path exists.</td></tr>
+    <tr><td><code>touch &lt;file&gt;</code></td><td>Creates an empty file. Skipped if it exists (the date is not updated). The parent folder must exist.</td></tr>
+    <tr><td><code>write &lt;file&gt; &lt;text&gt;</code></td><td>Appends <code>&lt;text&gt;</code> and a line break to the file, created if needed. One pair of quotes around the text is removed. The parent folder must exist. The text is not printed, so secrets stay out of your logs.</td></tr>
+    <tr><td><code>copy &lt;src&gt; &lt;dst&gt;</code> or <code>cp</code></td><td>Copies one file to <code>&lt;dst&gt;</code>, the full path of the new file. Stops WF if <code>&lt;src&gt;</code> does not exist. Skipped if <code>&lt;dst&gt;</code> exists, file or folder: it never overwrites.</td></tr>
+    <tr><td><code>move &lt;src&gt; &lt;dst&gt;</code></td><td>Moves or renames a file or folder. Stops WF if <code>&lt;src&gt;</code> does not exist. Skipped if <code>&lt;dst&gt;</code> exists: it never overwrites. Moving to another disk is not supported: use <code>copy</code> then <code>remove</code>.</td></tr>
+    <tr><td><code>remove &lt;path&gt;</code></td><td>Deletes a file, or a folder and everything inside it. Skipped if the path does not exist. Refuses to delete the current folder or the root of a disk.</td></tr>
+    <tr><td><code>set_permissions &lt;path&gt; &lt;mode&gt;</code></td><td>Applies an octal mode (<code>0755</code>, <code>644</code>…). On a folder, the same mode is applied to the folder and to every file and folder inside it.</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="note"><strong>copy copies files, not folders.</strong> <code>copy src/ dist/</code> fails, and <code>copy app.env config/</code> is skipped when <code>config/</code> exists. Write the full destination: <code>copy app.env config/app.env</code>.</div>
+<p>On Windows, <code>set_permissions</code> can only toggle the read-only flag: a mode without the owner write bit (like <code>0444</code>) makes files read-only, any other mode makes them writable.</p>
+
+<h2 id="messages">8. Messages</h2>
+<pre><span class="k">echo</span> <span class="v">"Plain message"</span>
+<span class="k">notify</span> <span class="v">"Same as echo"</span>
+<span class="k">notify_info</span> <span class="v">"Blue INFO label"</span>
+<span class="k">notify_success</span> <span class="v">"Green SUCCESS label"</span>
+<span class="k">notify_warning</span> <span class="v">"Yellow WARNING label"</span>
+<span class="k">notify_error</span> <span class="v">"Red ERROR label"</span>
+<span class="k">sync_time</span>                  <span class="c"># prints: System time: 2026-10-13 12:18:50 CEST</span></pre>
+<p>Messages are printed in the terminal; there is no desktop notification. Double quotes around the message are removed. <code>notify_error</code> only prints: the workflow continues. To stop, use <code>exit</code> or let a <code>run</code> fail.</p>
+<p><code>sync_time</code> prints the current system time and zone. It does not change the clock.</p>
+
+<h2 id="checks">9. Checks and pauses</h2>
+<pre><span class="k">[deploy]</span>
+<span class="k">require</span> <span class="v">docker git</span>
+<span class="k">confirm</span> <span class="v">"Deploy to production?"</span>
+<span class="k">docker_compose</span> <span class="v">up -d</span>
+<span class="k">sleep</span> <span class="v">5</span>
+<span class="k">docker_compose</span> <span class="v">exec php bin/console doctrine:migrations:migrate -n</span></pre>
+<p><code>require &lt;program...&gt;</code> checks that each program can be found in the <code>PATH</code>, and prints <code>&lt;program&gt; found</code>. A missing one stops WF with <code>&lt;program&gt; is required but was not found in PATH</code>. Put it at the top of a section, so nothing runs on a machine that is not ready.</p>
+<p><code>sleep &lt;seconds&gt;</code> waits a whole number of seconds, for example while a container starts.</p>
+<p><code>confirm "&lt;question&gt;"</code> prints the question followed by <code>[y/N]</code> and waits for an answer. <code>y</code> or <code>yes</code>, in any case, continues. Anything else, including just pressing Enter, stops WF with <code>Cancelled</code> and exit code <code>1</code>.</p>
+<div class="note"><strong>confirm needs someone to answer.</strong> In CI, or when the input is piped, there is no answer: WF stops. Keep <code>confirm</code> in workflows that people run by hand.</div>
+
+<h2 id="sub">10. Sub-workflows and exit</h2>
+<pre><span class="k">[deploy]</span>
+<span class="k">wf</span> <span class="v">build</span>
+<span class="k">wf</span> <span class="v">migrate</span>
+<span class="k">docker_compose</span> <span class="v">up -d</span></pre>
+<p><code>wf &lt;section&gt;</code> runs another section, then comes back to the next line. Sub-workflows can call other sub-workflows. Each level is indented in the output:</p>
+<pre>  ╭── 📦 Sub-Workflow: build
+  ...
+  ╰── ✔ Completed in 9.8s</pre>
+<p>Any section of any <code>.wf</code> file in the folder can be called. A name that does not exist stops WF with <code>Workflow '&lt;name&gt;' not found</code>. A section that calls itself, directly or through another one, never ends.</p>
+<p><code>exit</code> stops WF immediately, including every parent workflow, with exit code <code>0</code>. <code>exit &lt;code&gt;</code> uses that code instead: <code>exit 1</code> stops on purpose and marks the run as failed. A code that is not a number stops WF with <code>Invalid exit code</code>.</p>
+
+<h2 id="errors">11. Errors and exit codes</h2>
+<p>WF stops at the first error. Lines already run stay done: there is no rollback.</p>
+<div class="table-box">
+<table>
+  <thead><tr><th>Exit code</th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td><code>0</code></td><td>The section ran to the end, or reached <code>exit</code>.</td></tr>
+    <tr><td><code>1</code></td><td>A <code>run</code> or <code>docker_compose</code> failed, a file command failed, a <code>require</code> was not met, a <code>confirm</code> was not answered <code>y</code>, a <code>wf</code> section was not found, a line had an unknown command or invalid syntax, or two sections share a name.</td></tr>
+    <tr><td><code>3</code></td><td>The section given on the command line does not exist.</td></tr>
+    <tr><td>Any</td><td>The code given to <code>exit &lt;code&gt;</code>.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>An unknown command keyword prints <code>Unknown command or invalid syntax : &lt;line&gt;</code>. Since lines are checked when they run, a typo at the end of a section only shows up after the lines above it have run.</p>
+
+<h2 id="git-ci">12. Git and CI</h2>
+<p>Commit your <code>.wf</code> files: they are your project's runbook. WF writes nothing besides what your commands create.</p>
+<p>In CI or on a server, download the binary and run a section:</p>
+<pre>$ curl -fsSL -o /usr/local/bin/wf https://github.com/michelware/wf/releases/latest/download/wf-linux-amd64
+$ chmod +x /usr/local/bin/wf
+$ wf deploy</pre>
+<p>The exit code of <code>wf</code> tells your CI whether the workflow succeeded.</p>
+
+</article>
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">WF · <a href="https://github.com/michelware/wf">Source on GitHub</a></div>
+</footer>
+
+</body>
+</html>
